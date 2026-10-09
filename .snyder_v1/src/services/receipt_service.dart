@@ -151,7 +151,7 @@ class ReceiptService {
     final snap = Map<String, dynamic>.from(jsonDecode(receipt['snapshot_json'] as String) as Map);
     final date = parseDate(snap['payment_date']);
     await LocalFiles.saveBytes(
-      fileName: 'Rent_Receipt_${receipt['receipt_number']}$suffix_${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}-${date.year}.pdf',
+      fileName: 'Rent_Receipt_${receipt['receipt_number']}${suffix}_${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}-${date.year}.pdf',
       mime: 'application/pdf',
       bytes: bytes,
     );
