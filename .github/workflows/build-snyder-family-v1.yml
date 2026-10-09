@@ -130,6 +130,18 @@ jobs:
           sed -i 's/<application/<application android:allowBackup="false" android:fullBackupContent="false" android:usesCleartextTraffic="false"/' android/app/src/main/AndroidManifest.xml
           find android/app/src -name AndroidManifest.xml -print0 | xargs -0 sed -i '/android.permission.INTERNET/d'
 
+          python3 - <<'PYFIX'
+          from pathlib import Path
+          p=Path('lib/screens/life.dart')
+          s=p.read_text()
+          s=s.replace("child: const Text('Save'))]))));","child: const Text('Save'))])));")
+          p.write_text(s)
+          p=Path('lib/screens/property.dart')
+          s=p.read_text()
+          s=s.replace("subtitle: Text('${shortDate(parseDate(x['timestamp']))} • ${x['record_type']} ${x['record_id']}')),","subtitle: Text('${shortDate(parseDate(x['timestamp']))} • ${x['record_type']} ${x['record_id']}'))),")
+          p.write_text(s)
+          PYFIX
+
           flutter pub get
           dart run flutter_launcher_icons
           rm -f test/widget_test.dart
