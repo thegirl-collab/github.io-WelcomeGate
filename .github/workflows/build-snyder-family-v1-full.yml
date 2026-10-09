@@ -1,0 +1,314 @@
+name: Build Snyder Family v1 Full APK
+
+on:
+  push:
+    branches:
+      - build/snyder-family-v1-full
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf snyder_build
+          flutter create --platforms=android --org com.snyderfamily --project-name snyder_family snyder_build
+          cd snyder_build
+
+          cat > pubspec.yaml <<'PUB'
+          name: snyder_family
+          description: Snyder Family private household operating system.
+          publish_to: "none"
+          version: 1.0.0+100
+
+          environment:
+            sdk: ">=3.6.0 <4.0.0"
+
+          dependencies:
+            flutter:
+              sdk: flutter
+            cupertino_icons: ^1.0.8
+            sqflite: ^2.4.2
+            path: ^1.9.1
+            path_provider: ^2.1.5
+            intl: ^0.20.2
+            crypto: ^3.0.6
+            cryptography: ^2.7.0
+            pdf: ^3.11.3
+
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: ^5.0.0
+            flutter_launcher_icons: ^0.14.4
+
+          flutter:
+            uses-material-design: true
+            assets:
+              - assets/snyder_logo.png
+
+          flutter_launcher_icons:
+            android: true
+            image_path: assets/snyder_logo.png
+            adaptive_icon_background: "#050A12"
+            adaptive_icon_foreground: assets/snyder_logo.png
+            min_sdk_android: 23
+          PUB
+
+          rm -rf lib
+          mkdir -p lib
+          cp -r ../.snyder_v1/src/* lib/
+
+          mkdir -p assets
+          python3 - <<'PY'
+          import struct,zlib,math
+          W=H=1024
+          pix=bytearray(W*H*4)
+          def put(x,y,c):
+              if 0<=x<W and 0<=y<H:
+                  i=(y*W+x)*4; pix[i:i+4]=bytes(c)
+          def disk(cx,cy,r,c):
+              rr=r*r
+              for y in range(max(0,cy-r),min(H,cy+r+1)):
+                  dy=(y-cy)*(y-cy)
+                  for x in range(max(0,cx-r),min(W,cx+r+1)):
+                      if (x-cx)*(x-cx)+dy<=rr: put(x,y,c)
+          def line(x0,y0,x1,y1,w,c):
+              dx=x1-x0;dy=y1-y0;n=max(abs(dx),abs(dy),1)
+              for j in range(n+1):
+                  t=j/n; disk(round(x0+dx*t),round(y0+dy*t),max(1,w//2),c)
+          # obsidian/navy radial background
+          for y in range(H):
+              for x in range(W):
+                  d=min(1,math.hypot(x-W/2,y-H/2)/(W*.72))
+                  put(x,y,(5+int((1-d)*7),8+int((1-d)*9),18+int((1-d)*17),255))
+          # violet crescent
+          disk(290,260,170,(161,103,255,255)); disk(355,225,157,(8,14,27,255))
+          # house halo / roof
+          for w,c in [(60,(41,221,255,255)),(36,(219,229,241,255))]:
+              line(190,500,510,165,w,c); line(510,165,835,500,w,c)
+              line(235,480,235,790,w,c); line(790,470,790,790,w,c)
+          # custom S sweep
+          for w,c in [(92,(42,226,255,255)),(60,(222,229,240,255))]:
+              line(680,405,425,405,w,c)
+              line(425,405,365,475,w,c)
+              line(365,475,645,600,w,c)
+              line(645,600,690,665,w,c)
+              line(690,665,380,735,w,c)
+          # crystal
+          line(510,742,510,900,36,(176,114,255,255))
+          line(510,742,440,830,20,(78,218,255,255))
+          line(510,742,580,830,20,(78,218,255,255))
+          # raven silhouette perched at upper roof
+          black=(4,5,11,255)
+          disk(700,235,50,black); disk(736,250,30,black)
+          line(680,270,635,360,38,black); line(695,275,760,345,30,black)
+          line(760,245,812,230,13,black); disk(719,222,7,(52,232,255,255))
+          # subtle stars
+          for cx,cy in [(150,170),(845,170),(155,735),(850,735)]:
+              line(cx-22,cy,cx+22,cy,7,(215,188,255,255)); line(cx,cy-22,cx,cy+22,7,(215,188,255,255))
+          # border
+          for inset,c in [(36,(34,95,150,255)),(50,(46,228,255,255)),(66,(10,21,38,255))]:
+              line(inset,inset,W-inset,inset,12,c);line(inset,H-inset,W-inset,H-inset,12,c)
+              line(inset,inset,inset,H-inset,12,c);line(W-inset,inset,W-inset,H-inset,12,c)
+          raw=b''.join(b'\x00'+bytes(pix[y*W*4:(y+1)*W*4]) for y in range(H))
+          def ch(tag,data):
+              return struct.pack(">I",len(data))+tag+data+struct.pack(">I",zlib.crc32(tag+data)&0xffffffff)
+          png=b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack(">IIBBBBB",W,H,8,6,0,0,0))+ch(b'IDAT',zlib.compress(raw,9))+ch(b'IEND',b'')
+          open('assets/snyder_logo.png','wb').write(png)
+          PY
+
+          cat > android/app/src/main/kotlin/com/snyderfamily/snyder_family/MainActivity.kt <<'KOT'
+          package com.snyderfamily.snyder_family
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.OpenableColumns
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodCall
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity: FlutterActivity() {
+              private val channelName = "com.snyderfamily/files"
+              private val reqSave = 4101
+              private val reqPick = 4102
+              private var pendingResult: MethodChannel.Result? = null
+              private var pendingBytes: ByteArray? = null
+
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
+                      when (call.method) {
+                          "saveBytes" -> startSave(call, result)
+                          "pickFile" -> startPick(call, result)
+                          else -> result.notImplemented()
+                      }
+                  }
+              }
+
+              private fun startSave(call: MethodCall, result: MethodChannel.Result) {
+                  if (pendingResult != null) {
+                      result.error("busy", "Another file operation is already active.", null)
+                      return
+                  }
+                  val fileName = call.argument<String>("fileName") ?: "Snyder_Family_File"
+                  val mime = call.argument<String>("mime") ?: "application/octet-stream"
+                  val bytes = call.argument<ByteArray>("bytes")
+                  if (bytes == null) {
+                      result.error("bytes", "No file bytes were provided.", null)
+                      return
+                  }
+                  pendingResult = result
+                  pendingBytes = bytes
+                  val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                      addCategory(Intent.CATEGORY_OPENABLE)
+                      type = mime
+                      putExtra(Intent.EXTRA_TITLE, fileName)
+                  }
+                  startActivityForResult(intent, reqSave)
+              }
+
+              private fun startPick(call: MethodCall, result: MethodChannel.Result) {
+                  if (pendingResult != null) {
+                      result.error("busy", "Another file operation is already active.", null)
+                      return
+                  }
+                  val types = call.argument<List<String>>("mimeTypes") ?: listOf("*/*")
+                  pendingResult = result
+                  val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                      addCategory(Intent.CATEGORY_OPENABLE)
+                      type = if (types.size == 1) types.first() else "*/*"
+                      if (types.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, types.toTypedArray())
+                  }
+                  startActivityForResult(intent, reqPick)
+              }
+
+              @Deprecated("Deprecated in Java")
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  val result = pendingResult ?: return
+                  if (resultCode != Activity.RESULT_OK || data?.data == null) {
+                      pendingResult = null
+                      pendingBytes = null
+                      result.success(null)
+                      return
+                  }
+                  val uri = data.data!!
+                  try {
+                      when (requestCode) {
+                          reqSave -> {
+                              contentResolver.openOutputStream(uri)?.use { it.write(pendingBytes ?: byteArrayOf()) }
+                                  ?: throw IllegalStateException("Could not open selected destination.")
+                              result.success(uri.toString())
+                          }
+                          reqPick -> {
+                              val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                                  ?: throw IllegalStateException("Could not read selected file.")
+                              result.success(mapOf(
+                                  "name" to displayName(uri),
+                                  "mime" to (contentResolver.getType(uri) ?: "application/octet-stream"),
+                                  "bytes" to bytes
+                              ))
+                          }
+                      }
+                  } catch (e: Exception) {
+                      result.error("file_io", e.message, null)
+                  } finally {
+                      pendingResult = null
+                      pendingBytes = null
+                  }
+              }
+
+              private fun displayName(uri: Uri): String {
+                  var name = "file"
+                  contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                      val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                      if (idx >= 0 && cursor.moveToFirst()) name = cursor.getString(idx)
+                  }
+                  return name
+              }
+          }
+          KOT
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/build.gradle.kts')
+          s=p.read_text()
+          s=s.replace('minSdk = flutter.minSdkVersion','minSdk = 23')
+          p.write_text(s)
+          m=Path('android/app/src/main/AndroidManifest.xml')
+          s=m.read_text()
+          s=s.replace('android:label="snyder_family"','android:label="Snyder Family"')
+          s=s.replace('<application','<application android:allowBackup="false" android:fullBackupContent="false" android:usesCleartextTraffic="false"',1)
+          s='\n'.join(line for line in s.splitlines() if 'android.permission.INTERNET' not in line)
+          m.write_text(s)
+          for extra in Path('android/app/src').rglob('AndroidManifest.xml'):
+              if extra == m: continue
+              t=extra.read_text()
+              extra.write_text('\n'.join(line for line in t.splitlines() if 'android.permission.INTERNET' not in line))
+          PY
+
+          flutter pub get
+          dart run flutter_launcher_icons
+          rm -f test/widget_test.dart
+          dart format lib
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter build apk --release
+
+      - name: Verify APK privacy and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd snyder_build
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -f "$APK"
+          BT="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/$BT/aapt" dump permissions "$APK" | tee permissions.txt
+          if grep -q 'android.permission.INTERNET' permissions.txt; then
+            echo "ERROR: final APK requests INTERNET permission" >&2
+            exit 1
+          fi
+          cp "$APK" ../Snyder_Family_v1.0.0_phone_only.apk
+          sha256sum ../Snyder_Family_v1.0.0_phone_only.apk | tee ../SHA256.txt
+          {
+            echo "Snyder Family v1.0.0"
+            echo "Phone-only Android build"
+            echo "INTERNET permission: absent (verified)"
+            echo "Android cloud backup: disabled"
+            echo "Storage: app-private SQLite + app-private property documents"
+            echo "Manual backup: AES-256-GCM encrypted via Android file picker"
+            echo "Legacy landlord v7 JSON import: included"
+            echo "Receipt PDF export: included"
+            echo "Build UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > ../BUILD_REPORT.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Snyder-Family-v1.0.0-phone-only
+          path: |
+            Snyder_Family_v1.0.0_phone_only.apk
+            BUILD_REPORT.txt
+            SHA256.txt
+          if-no-files-found: error
