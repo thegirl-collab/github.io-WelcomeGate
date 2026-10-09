@@ -1,0 +1,453 @@
+name: Build Snyder Family APK
+
+on:
+  push:
+    branches:
+      - build/snyder-family-apk
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Snyder Family app
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf snyder_build
+          flutter create --platforms=android --org com.snyderfamily --project-name snyder_family snyder_build
+          cd snyder_build
+
+          cat > pubspec.yaml <<'PUBSPEC'
+          name: snyder_family
+          description: Snyder Family private household and property command center.
+          publish_to: "none"
+          version: 0.3.0+3
+
+          environment:
+            sdk: ">=3.6.0 <4.0.0"
+
+          dependencies:
+            flutter:
+              sdk: flutter
+            cupertino_icons: ^1.0.8
+            sqflite: ^2.4.2
+            path: ^1.9.1
+
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: ^5.0.0
+            flutter_launcher_icons: ^0.14.4
+
+          flutter:
+            uses-material-design: true
+
+          flutter_launcher_icons:
+            android: true
+            image_path: assets/icon.png
+            adaptive_icon_background: "#050A12"
+            adaptive_icon_foreground: assets/icon.png
+            min_sdk_android: 23
+          PUBSPEC
+
+          mkdir -p assets
+          python3 - <<'PY'
+          import struct, zlib, math
+          W=H=512
+          pix=bytearray(W*H*4)
+          def put(x,y,c):
+              if 0<=x<W and 0<=y<H:
+                  i=(y*W+x)*4
+                  pix[i:i+4]=bytes(c)
+          for y in range(H):
+              for x in range(W):
+                  d=math.hypot(x-W/2,y-H/2)/(W*.72)
+                  glow=max(0,1-d)
+                  put(x,y,(5+int(7*glow),10+int(10*glow),18+int(18*glow),255))
+          def disk(cx,cy,r,c):
+              rr=r*r
+              for y in range(max(0,cy-r),min(H,cy+r+1)):
+                  dy=(y-cy)*(y-cy)
+                  for x in range(max(0,cx-r),min(W,cx+r+1)):
+                      if (x-cx)*(x-cx)+dy<=rr: put(x,y,c)
+          def line(x0,y0,x1,y1,w,c):
+              dx=x1-x0; dy=y1-y0; steps=max(abs(dx),abs(dy),1)
+              for j in range(steps+1):
+                  t=j/steps; x=round(x0+dx*t); y=round(y0+dy*t)
+                  disk(x,y,w//2,c)
+          for inset,col in [(18,(25,120,210,255)),(24,(40,230,255,255)),(31,(11,27,44,255))]:
+              line(inset,inset,W-inset,inset,8,col); line(inset,H-inset,W-inset,H-inset,8,col)
+              line(inset,inset,inset,H-inset,8,col); line(W-inset,inset,W-inset,H-inset,8,col)
+          disk(145,135,70,(169,124,255,255)); disk(174,120,66,(7,14,25,255))
+          for w,c in [(34,(30,226,255,255)),(22,(212,221,235,255))]:
+              line(105,245,256,92,w,c); line(256,92,410,245,w,c)
+              line(125,230,125,388,w,c); line(388,225,388,388,w,c)
+          for w,c in [(56,(36,226,255,255)),(40,(217,224,236,255))]:
+              line(338,205,205,205,w,c); line(205,205,180,235,w,c)
+              line(180,235,320,300,w,c); line(320,300,342,330,w,c); line(342,330,185,360,w,c)
+          line(256,365,256,438,20,(179,121,255,255)); line(256,365,226,405,12,(103,215,255,255)); line(256,365,286,405,12,(103,215,255,255))
+          disk(346,126,24,(12,14,24,255)); disk(363,133,14,(12,14,24,255)); line(337,145,315,190,20,(12,14,24,255)); line(343,146,375,186,16,(12,14,24,255)); line(372,130,393,124,7,(12,14,24,255)); disk(356,121,3,(52,231,255,255))
+          for cx,cy in [(94,109),(405,105),(99,335),(418,338)]:
+              line(cx-12,cy,cx+12,cy,4,(213,185,255,255)); line(cx,cy-12,cx,cy+12,4,(213,185,255,255))
+          scan=b''.join(b'\x00'+bytes(pix[y*W*4:(y+1)*W*4]) for y in range(H))
+          def chunk(tag,data):
+              return struct.pack(">I",len(data))+tag+data+struct.pack(">I",zlib.crc32(tag+data)&0xffffffff)
+          png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack(">IIBBBBB",W,H,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(scan,9))+chunk(b'IEND',b'')
+          open('assets/icon.png','wb').write(png)
+          PY
+
+          cat > lib/main.dart <<'DART'
+          import 'dart:math' as math;
+          import 'package:flutter/material.dart';
+          import 'package:path/path.dart' as p;
+          import 'package:sqflite/sqflite.dart';
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            runApp(const SnyderFamilyApp());
+          }
+
+          class C {
+            static const bg=Color(0xFF050A12), panel=Color(0xF20A1420), soft=Color(0xFF101C2A);
+            static const cyan=Color(0xFF34E7FF), blue=Color(0xFF338BFF), violet=Color(0xFFAF7CFF);
+            static const lavender=Color(0xFFD5B9FF), green=Color(0xFF49E9A6), warning=Color(0xFFFFC857);
+            static const danger=Color(0xFFFF6F7D), text=Color(0xFFF5F8FF), muted=Color(0xFF9AB0C7), line=Color(0xFF28435E);
+          }
+
+          class SnyderFamilyApp extends StatelessWidget {
+            const SnyderFamilyApp({super.key});
+            @override
+            Widget build(BuildContext context) => MaterialApp(
+              debugShowCheckedModeBanner:false,
+              title:'Snyder Family',
+              theme:ThemeData(
+                brightness:Brightness.dark,useMaterial3:true,scaffoldBackgroundColor:C.bg,
+                colorScheme:ColorScheme.fromSeed(seedColor:C.cyan,brightness:Brightness.dark,surface:C.panel),
+                dividerColor:C.line,
+                navigationBarTheme:const NavigationBarThemeData(backgroundColor:Color(0xFF07101A),indicatorColor:Color(0x332EEBFF)),
+                inputDecorationTheme:InputDecorationTheme(
+                  filled:true,fillColor:C.soft,
+                  border:OutlineInputBorder(borderRadius:BorderRadius.circular(14),borderSide:const BorderSide(color:C.line)),
+                  enabledBorder:OutlineInputBorder(borderRadius:BorderRadius.circular(14),borderSide:const BorderSide(color:C.line)),
+                  focusedBorder:OutlineInputBorder(borderRadius:BorderRadius.circular(14),borderSide:const BorderSide(color:C.cyan,width:1.5)),
+                ),
+              ),
+              home:const Shell(),
+            );
+          }
+
+          class Db {
+            Db._(); static final Db i=Db._(); Database? _db;
+            Future<Database> get db async => _db ??= await _open();
+            Future<Database> _open() async {
+              final root=await getDatabasesPath();
+              return openDatabase(p.join(root,'snyder_family.db'),version:1,onCreate:(d,v) async {
+                await d.execute('CREATE TABLE settings(k TEXT PRIMARY KEY,v TEXT NOT NULL)');
+                await d.execute('CREATE TABLE bills(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,amount REAL NOT NULL,funded REAL NOT NULL DEFAULT 0,due TEXT NOT NULL)');
+                await d.execute('CREATE TABLE goals(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,target REAL NOT NULL,saved REAL NOT NULL DEFAULT 0)');
+                await d.execute('CREATE TABLE stock(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,on_hand REAL NOT NULL DEFAULT 0,year_need REAL NOT NULL DEFAULT 0,unit_cost REAL NOT NULL DEFAULT 0,checked INTEGER NOT NULL DEFAULT 0)');
+                await d.execute('CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,due_label TEXT NOT NULL,done INTEGER NOT NULL DEFAULT 0)');
+                await d.execute('CREATE TABLE property(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,tenant TEXT NOT NULL,rent REAL NOT NULL DEFAULT 0)');
+                await d.execute('CREATE TABLE ledger(id INTEGER PRIMARY KEY AUTOINCREMENT,entry_type TEXT NOT NULL,amount REAL NOT NULL,entry_date TEXT NOT NULL,description TEXT NOT NULL,method TEXT NOT NULL DEFAULT "",reference TEXT NOT NULL DEFAULT "",reverses_id INTEGER)');
+                await d.execute('CREATE TABLE expenses(id INTEGER PRIMARY KEY AUTOINCREMENT,amount REAL NOT NULL,expense_date TEXT NOT NULL,category TEXT NOT NULL,vendor TEXT NOT NULL,note TEXT NOT NULL)');
+                await d.execute('CREATE TABLE journal(id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT NOT NULL,category TEXT NOT NULL,note TEXT NOT NULL,parent_id INTEGER)');
+                await _seed(d);
+              });
+            }
+            static Future<void> _seed(Database d) async {
+              final now=DateTime.now();
+              String day(int x)=>now.add(Duration(days:x)).toIso8601String();
+              await d.insert('settings',{'k':'paycheck','v':'2200'});
+              await d.insert('settings',{'k':'payday','v':day(7)});
+              for(final b in [
+                ['Electric',185.0,40.0,5],['Internet',95.0,0.0,9],['Car Insurance',170.0,0.0,16],['Property Tax Fund',1500.0,400.0,60],['Groceries / Household',650.0,100.0,12]
+              ]) await d.insert('bills',{'name':b[0],'amount':b[1],'funded':b[2],'due':day(b[3] as int)});
+              for(final g in [
+                ['Property Purchase',60000.0,0.0],['Emergency Fund',10000.0,500.0],['Home Improvements',5000.0,250.0],['New PC Setup',2500.0,0.0],['Spoil the Pups',800.0,100.0]
+              ]) await d.insert('goals',{'name':g[0],'target':g[1],'saved':g[2]});
+              for(final s in [
+                ['Toilet Paper',8.0,40.0,12.0],['Paper Towels',5.0,30.0,14.0],['Dog Food',2.0,18.0,42.0],['Laundry Detergent',3.0,12.0,18.0],['Shampoo',4.0,14.0,9.0],['Coffee',3.0,24.0,12.0],['Trash Bags',2.0,10.0,16.0],['Crow Peanuts',2.0,20.0,8.0]
+              ]) await d.insert('stock',{'name':s[0],'on_hand':s[1],'year_need':s[2],'unit_cost':s[3],'checked':0});
+              for(final t in [['Dishes','Today'],['Laundry','Today'],['Take Out Trash','Tomorrow'],['Mow Lawn','This week'],['Homeschool Prep','Monday'],['Clean Bathrooms','Sunday']]) await d.insert('tasks',{'name':t[0],'due_label':t[1],'done':0});
+              await d.insert('property',{'name':'Rental Property','tenant':'Tenant','rent':900.0});
+              await d.insert('ledger',{'entry_type':'charge','amount':900.0,'entry_date':now.toIso8601String(),'description':'Monthly rent charge','method':'','reference':''});
+            }
+            Future<double> settingNum(String k) async {
+              final d=await db, r=await d.query('settings',where:'k=?',whereArgs:[k],limit:1);
+              return r.isEmpty?0:double.tryParse(r.first['v'] as String)??0;
+            }
+            Future<String> setting(String k) async {
+              final d=await db, r=await d.query('settings',where:'k=?',whereArgs:[k],limit:1);
+              return r.isEmpty?'':r.first['v'] as String;
+            }
+            Future<void> setSetting(String k,String v) async { final d=await db; await d.insert('settings',{'k':k,'v':v},conflictAlgorithm:ConflictAlgorithm.replace); }
+            Future<List<Map<String,Object?>>> rows(String table,{String? order}) async => (await db).query(table,orderBy:order);
+            Future<int> add(String table,Map<String,Object?> data) async => (await db).insert(table,data);
+            Future<void> toggle(String table,int id,String col,int current) async => (await db).update(table,{col:current==1?0:1},where:'id=?',whereArgs:[id]);
+            Future<void> reverseLedger(Map<String,Object?> e) async {
+              if(e['entry_type']=='reversal') return;
+              final d=await db;
+              await d.insert('ledger',{
+                'entry_type':'reversal','amount':-((e['amount'] as num).toDouble()),'entry_date':DateTime.now().toIso8601String(),
+                'description':'Reversal of #${e['id']}: ${e['description']}','method':e['method']??'','reference':e['reference']??'','reverses_id':e['id']
+              });
+            }
+          }
+
+          class Shell extends StatefulWidget { const Shell({super.key}); @override State<Shell> createState()=>_ShellState(); }
+          class _ShellState extends State<Shell> {
+            int tab=0,token=0; void refresh()=>setState(()=>token++);
+            @override Widget build(BuildContext context) {
+              final pages=[Home(token:token,refresh:refresh),Stockpile(token:token,refresh:refresh),PropertyHub(token:token,refresh:refresh),Finances(token:token,refresh:refresh),const More()];
+              return Scaffold(body:IndexedStack(index:tab,children:pages),bottomNavigationBar:NavigationBar(
+                selectedIndex:tab,onDestinationSelected:(v)=>setState(()=>tab=v),destinations:const[
+                  NavigationDestination(icon:Icon(Icons.home_outlined),selectedIcon:Icon(Icons.home),label:'Home'),
+                  NavigationDestination(icon:Icon(Icons.inventory_2_outlined),selectedIcon:Icon(Icons.inventory_2),label:'Stockpile'),
+                  NavigationDestination(icon:Icon(Icons.key_outlined),selectedIcon:Icon(Icons.key),label:'Property'),
+                  NavigationDestination(icon:Icon(Icons.account_balance_wallet_outlined),selectedIcon:Icon(Icons.account_balance_wallet),label:'Finances'),
+                  NavigationDestination(icon:Icon(Icons.more_horiz),label:'More'),
+                ]));
+            }
+          }
+
+          class Crest extends StatelessWidget {
+            const Crest({super.key,this.size=86}); final double size;
+            @override Widget build(BuildContext context)=>CustomPaint(size:Size.square(size),painter:CrestPainter());
+          }
+          class CrestPainter extends CustomPainter {
+            @override void paint(Canvas c,Size s) {
+              final cyan=Paint()..color=C.cyan..style=PaintingStyle.stroke..strokeWidth=s.width*.055..strokeCap=StrokeCap.round..strokeJoin=StrokeJoin.round;
+              final silver=Paint()..color=const Color(0xFFE0E6F0)..style=PaintingStyle.stroke..strokeWidth=s.width*.095..strokeCap=StrokeCap.round..strokeJoin=StrokeJoin.round;
+              final vio=Paint()..color=C.violet..style=PaintingStyle.stroke..strokeWidth=s.width*.035..strokeCap=StrokeCap.round;
+              final bg=Paint()..color=const Color(0xFF08121E);
+              c.drawRRect(RRect.fromRectAndRadius(Offset.zero&s,Radius.circular(s.width*.22)),bg);
+              final roof=Path()..moveTo(s.width*.14,s.height*.43)..lineTo(s.width*.5,s.height*.12)..lineTo(s.width*.86,s.height*.43);
+              c.drawPath(roof,cyan); c.drawPath(roof,silver);
+              c.drawLine(Offset(s.width*.19,s.height*.42),Offset(s.width*.19,s.height*.82),silver);
+              c.drawLine(Offset(s.width*.81,s.height*.42),Offset(s.width*.81,s.height*.82),silver);
+              final sp=Path()..moveTo(s.width*.70,s.height*.37)..cubicTo(s.width*.52,s.height*.30,s.width*.27,s.height*.35,s.width*.30,s.height*.48)..cubicTo(s.width*.33,s.height*.58,s.width*.69,s.height*.53,s.width*.70,s.height*.66)..cubicTo(s.width*.71,s.height*.78,s.width*.43,s.height*.82,s.width*.29,s.height*.76);
+              c.drawPath(sp,cyan); final ss=Paint()..color=const Color(0xFFD9E0EB)..style=PaintingStyle.stroke..strokeWidth=s.width*.075..strokeCap=StrokeCap.round;c.drawPath(sp,ss);
+              c.drawArc(Rect.fromCircle(center:Offset(s.width*.25,s.height*.26),radius:s.width*.11),.5,4.7,false,vio);
+              final crystal=Path()..moveTo(s.width*.5,s.height*.75)..lineTo(s.width*.57,s.height*.87)..lineTo(s.width*.5,s.height*.96)..lineTo(s.width*.43,s.height*.87)..close(); c.drawPath(crystal,Paint()..color=C.violet);
+              final bird=Paint()..color=const Color(0xFF05070D);
+              c.drawOval(Rect.fromCenter(center:Offset(s.width*.71,s.height*.18),width:s.width*.15,height:s.height*.10),bird);
+              c.drawOval(Rect.fromCenter(center:Offset(s.width*.74,s.height*.24),width:s.width*.11,height:s.height*.17),bird);
+              c.drawCircle(Offset(s.width*.745,s.height*.16),s.width*.012,Paint()..color=C.cyan);
+            }
+            @override bool shouldRepaint(covariant CustomPainter oldDelegate)=>false;
+          }
+
+          class Page extends StatelessWidget {
+            const Page({super.key,required this.title,required this.subtitle,required this.child});
+            final String title,subtitle; final Widget child;
+            @override Widget build(BuildContext context)=>SafeArea(child:CustomScrollView(slivers:[
+              SliverToBoxAdapter(child:Container(margin:const EdgeInsets.fromLTRB(14,12,14,12),padding:const EdgeInsets.all(14),decoration:BoxDecoration(
+                gradient:const LinearGradient(colors:[Color(0xFF0A1422),Color(0xFF17152B),Color(0xFF07131E)]),borderRadius:BorderRadius.circular(24),border:Border.all(color:C.violet.withValues(alpha:.55))
+              ),child:Row(children:[const Crest(),const SizedBox(width:13),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                Text(title.toUpperCase(),style:const TextStyle(fontSize:20,fontWeight:FontWeight.w900,letterSpacing:1.1)),
+                const SizedBox(height:3),Text(subtitle,style:const TextStyle(color:C.lavender,fontSize:12)),
+                const SizedBox(height:7),const Text('☾  Our Home • Our Plan • Our Peace  🐦‍⬛',style:TextStyle(color:C.muted,fontSize:10))
+              ]))]))),
+              SliverPadding(padding:const EdgeInsets.fromLTRB(14,0,14,28),sliver:SliverToBoxAdapter(child:child))
+            ]));
+          }
+
+          class CardX extends StatelessWidget {
+            const CardX({super.key,required this.child,this.accent=C.cyan}); final Widget child; final Color accent;
+            @override Widget build(BuildContext context)=>Container(padding:const EdgeInsets.all(15),decoration:BoxDecoration(color:C.panel,borderRadius:BorderRadius.circular(20),border:Border.all(color:accent.withValues(alpha:.48)),boxShadow:[BoxShadow(color:accent.withValues(alpha:.09),blurRadius:18)]),child:child);
+          }
+          Widget titleRow(IconData i,String t,{Widget? trailing})=>Row(children:[Icon(i,color:C.cyan,size:21),const SizedBox(width:8),Expanded(child:Text(t.toUpperCase(),style:const TextStyle(fontWeight:FontWeight.w900,letterSpacing:.5))),if(trailing!=null)trailing]);
+          String money(num v)=>String.fromCharCode(36)+v.toStringAsFixed(2);
+          double n(Object? v)=>v is num?v.toDouble():0;
+          DateTime dt(Object? v)=>DateTime.tryParse(v?.toString()??'')??DateTime.now();
+
+          class Home extends StatelessWidget {
+            const Home({super.key,required this.token,required this.refresh}); final int token; final VoidCallback refresh;
+            Future<Map<String,dynamic>> load() async {
+              final db=Db.i;
+              final pay=await db.settingNum('paycheck'), pd=dt(await db.setting('payday'));
+              final bills=await db.rows('bills',order:'due ASC'),goals=await db.rows('goals'),stock=await db.rows('stock'),tasks=await db.rows('tasks');
+              double need=0; for(final b in bills){ final gap=dt(b['due']).difference(pd).inDays; final checks=math.max(1,(gap/14).floor()+1); need+=math.max(0.0,n(b['amount'])-n(b['funded']))/checks; }
+              final stockNeed=stock.fold<double>(0,(s,x)=>s+math.max(0.0,n(x['year_need'])-n(x['on_hand']))*n(x['unit_cost']));
+              final goalNeed=goals.fold<double>(0,(s,x)=>s+math.max(0.0,n(x['target'])-n(x['saved'])));
+              final stockAlloc=math.min(pay*.18,stockNeed/26),saveAlloc=math.min(pay*.20,goalNeed/26),buffer=pay*.10,remaining=pay-need-stockAlloc-saveAlloc-buffer;
+              return {'pay':pay,'pd':pd,'bills':bills,'goals':goals,'stock':stock,'tasks':tasks,'billNeed':need,'stockAlloc':stockAlloc,'saveAlloc':saveAlloc,'buffer':buffer,'remaining':remaining};
+            }
+            @override Widget build(BuildContext context)=>Page(title:'Snyder Family',subtitle:"Cyn's private home command center",child:FutureBuilder<Map<String,dynamic>>(key:ValueKey(token),future:load(),builder:(context,s){
+              if(!s.hasData)return const Padding(padding:EdgeInsets.all(40),child:Center(child:CircularProgressIndicator()));
+              final d=s.data!,pay=d['pay'] as double,pd=d['pd'] as DateTime,bills=d['bills'] as List<Map<String,Object?>>,tasks=d['tasks'] as List<Map<String,Object?>>;
+              return Column(children:[
+                CardX(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  titleRow(Icons.calendar_month,'Next Paycheck',trailing:IconButton(icon:const Icon(Icons.edit_outlined),onPressed:()=>editPay(context,pay))),
+                  Text(money(pay),style:const TextStyle(fontSize:36,fontWeight:FontWeight.w900,color:C.cyan)),
+                  Text('${pd.month}/${pd.day}/${pd.year} • biweekly household plan',style:const TextStyle(color:C.muted)),
+                  const SizedBox(height:10),LinearProgressIndicator(value:.67,minHeight:8,borderRadius:BorderRadius.circular(99),color:C.cyan,backgroundColor:C.line),
+                  const SizedBox(height:9),Text((d['remaining'] as double)>=0?'${money(d['remaining'])} flexible after planned allocations':'${money((d['remaining'] as double).abs())} over planned paycheck',style:TextStyle(color:(d['remaining'] as double)>=0?C.green:C.danger,fontWeight:FontWeight.w700))
+                ])),
+                const SizedBox(height:12),
+                CardX(accent:C.blue,child:Column(children:[titleRow(Icons.receipt_long,'Bills to Fund'),...bills.take(5).map((b){
+                  final gap=dt(b['due']).difference(pd).inDays,checks=math.max(1,(gap/14).floor()+1),amt=math.max(0.0,n(b['amount'])-n(b['funded']))/checks;
+                  return ListTile(contentPadding:EdgeInsets.zero,dense:true,leading:const Icon(Icons.payments_outlined,color:C.cyan),title:Text(b['name'].toString()),subtitle:Text('Due ${dt(b['due']).month}/${dt(b['due']).day} • ${money(n(b['funded']))} funded'),trailing:Text(money(amt),style:const TextStyle(fontWeight:FontWeight.w800)));
+                })])),
+                const SizedBox(height:12),
+                CardX(accent:C.violet,child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  titleRow(Icons.pie_chart_outline,'Smart Split • Paycheck Plan'),
+                  split('Bills',d['billNeed'] as double,pay,C.cyan),split('Savings',d['saveAlloc'] as double,pay,C.violet),split('Household / Stockpile',d['stockAlloc'] as double,pay,C.blue),split('Spending Buffer',d['buffer'] as double,pay,C.warning),
+                  const Divider(),Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[const Text('Left to assign',style:TextStyle(color:C.muted)),Text(money(d['remaining']),style:TextStyle(fontSize:18,fontWeight:FontWeight.w900,color:(d['remaining'] as double)>=0?C.green:C.danger))])
+                ])),
+                const SizedBox(height:12),
+                CardX(child:Column(children:[titleRow(Icons.task_alt,'Household Tasks'),...tasks.take(6).map((t)=>CheckboxListTile(contentPadding:EdgeInsets.zero,value:(t['done'] as int)==1,title:Text(t['name'].toString()),subtitle:Text(t['due_label'].toString()),onChanged:(_)async{await Db.i.toggle('tasks',t['id'] as int,'done',t['done'] as int);refresh();}))]))
+              ]);
+            }));
+            Widget split(String label,double amount,double total,Color c)=>Padding(padding:const EdgeInsets.symmetric(vertical:6),child:Row(children:[SizedBox(width:135,child:Text(label)),Expanded(child:LinearProgressIndicator(value:total<=0?0:(amount/total).clamp(0.0,1.0).toDouble(),minHeight:8,borderRadius:BorderRadius.circular(99),color:c,backgroundColor:C.line)),const SizedBox(width:8),SizedBox(width:75,child:Text(money(amount),textAlign:TextAlign.right,style:const TextStyle(fontWeight:FontWeight.w700)))]));
+            Future<void> editPay(BuildContext context,double current) async {
+              final c=TextEditingController(text:current.toStringAsFixed(2));
+              final ok=await showDialog<bool>(context:context,builder:(x)=>AlertDialog(title:const Text('Next paycheck'),content:TextField(controller:c,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Expected take-home amount')),actions:[TextButton(onPressed:()=>Navigator.pop(x,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(x,true),child:const Text('Save'))]));
+              if(ok==true){final v=double.tryParse(c.text);if(v!=null&&v>=0){await Db.i.setSetting('paycheck',v.toString());refresh();}}
+            }
+          }
+
+          class Stockpile extends StatefulWidget { const Stockpile({super.key,required this.token,required this.refresh}); final int token; final VoidCallback refresh; @override State<Stockpile> createState()=>_StockpileState(); }
+          class _StockpileState extends State<Stockpile>{
+            @override Widget build(BuildContext context)=>Page(title:'Stockpile',subtitle:'Yearly bulk plan + shopping list',child:FutureBuilder<List<Map<String,Object?>>>(key:ValueKey(widget.token),future:Db.i.rows('stock'),builder:(context,s){
+              if(!s.hasData)return const Center(child:CircularProgressIndicator()); final xs=s.data!; final total=xs.fold<double>(0,(q,x)=>q+math.max(0.0,n(x['year_need'])-n(x['on_hand']))*n(x['unit_cost']));
+              return Column(children:[
+                CardX(accent:C.violet,child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[titleRow(Icons.inventory_2,'Yearly Bulk Plan',trailing:IconButton(onPressed:()=>addItem(context),icon:const Icon(Icons.add))),const SizedBox(height:7),Text('${xs.length} tracked categories',style:const TextStyle(color:C.muted)),Text('${money(total)} estimated remaining annual stockpile cost',style:const TextStyle(color:C.cyan,fontWeight:FontWeight.w800))])),
+                const SizedBox(height:12),
+                CardX(child:Column(children:xs.map((x)=>CheckboxListTile(contentPadding:EdgeInsets.zero,value:(x['checked'] as int)==1,title:Text(x['name'].toString()),subtitle:Text('On hand ${n(x['on_hand']).toStringAsFixed(0)} • Year need ${n(x['year_need']).toStringAsFixed(0)}'),secondary:Icon(x['name'].toString().contains('Crow')?Icons.flutter_dash:Icons.inventory_2_outlined,color:x['name'].toString().contains('Crow')?C.violet:C.cyan),onChanged:(_)async{await Db.i.toggle('stock',x['id'] as int,'checked',x['checked'] as int);widget.refresh();})).toList()))
+              ]);
+            }));
+            Future<void> addItem(BuildContext context) async {
+              final name=TextEditingController(),need=TextEditingController(),cost=TextEditingController();
+              final ok=await showDialog<bool>(context:context,builder:(x)=>AlertDialog(title:const Text('Add stockpile item'),content:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:name,decoration:const InputDecoration(labelText:'Item')),const SizedBox(height:8),TextField(controller:need,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Yearly quantity')),const SizedBox(height:8),TextField(controller:cost,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Estimated unit cost'))]),actions:[TextButton(onPressed:()=>Navigator.pop(x,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(x,true),child:const Text('Add'))]));
+              if(ok==true&&name.text.trim().isNotEmpty){await Db.i.add('stock',{'name':name.text.trim(),'on_hand':0.0,'year_need':double.tryParse(need.text)??0.0,'unit_cost':double.tryParse(cost.text)??0.0,'checked':0});widget.refresh();}
+            }
+          }
+
+          class Finances extends StatelessWidget {
+            const Finances({super.key,required this.token,required this.refresh}); final int token; final VoidCallback refresh;
+            Future<Map<String,dynamic>> load()async=>{'b':await Db.i.rows('bills',order:'due ASC'),'g':await Db.i.rows('goals')};
+            @override Widget build(BuildContext context)=>Page(title:'Finances',subtitle:'Bills, goals, and the money map',child:FutureBuilder<Map<String,dynamic>>(key:ValueKey(token),future:load(),builder:(context,s){
+              if(!s.hasData)return const Center(child:CircularProgressIndicator());final b=s.data!['b'] as List<Map<String,Object?>>,g=s.data!['g'] as List<Map<String,Object?>>;
+              return Column(children:[
+                CardX(accent:C.blue,child:Column(children:[titleRow(Icons.receipt_long,'Bills',trailing:IconButton(onPressed:()=>addBill(context),icon:const Icon(Icons.add))),...b.map((x)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(x['name'].toString()),subtitle:Text('Funded ${money(n(x['funded']))} of ${money(n(x['amount']))}'),trailing:Text('${dt(x['due']).month}/${dt(x['due']).day}')))])),
+                const SizedBox(height:12),
+                CardX(accent:C.violet,child:Column(children:[titleRow(Icons.savings_outlined,'Savings Goals'),...g.map((x){final target=n(x['target']),saved=n(x['saved']),pr=target<=0?0.0:(saved/target).clamp(0.0,1.0).toDouble();return Padding(padding:const EdgeInsets.only(top:12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Expanded(child:Text(x['name'].toString(),style:const TextStyle(fontWeight:FontWeight.w700))),Text('${money(saved)} / ${money(target)}')]),const SizedBox(height:5),LinearProgressIndicator(value:pr,minHeight:8,borderRadius:BorderRadius.circular(99),color:x['name'].toString().contains('Property')?C.cyan:C.violet,backgroundColor:C.line)]));})]))
+              ]);
+            }));
+            Future<void> addBill(BuildContext context)async{
+              final name=TextEditingController(),amt=TextEditingController();
+              final ok=await showDialog<bool>(context:context,builder:(x)=>AlertDialog(title:const Text('Add bill'),content:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:name,decoration:const InputDecoration(labelText:'Bill name')),const SizedBox(height:8),TextField(controller:amt,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Amount'))]),actions:[TextButton(onPressed:()=>Navigator.pop(x,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(x,true),child:const Text('Add'))]));
+              if(ok==true&&name.text.trim().isNotEmpty){await Db.i.add('bills',{'name':name.text.trim(),'amount':double.tryParse(amt.text)??0.0,'funded':0.0,'due':DateTime.now().add(const Duration(days:14)).toIso8601String()});refresh();}
+            }
+          }
+
+          class PropertyHub extends StatelessWidget {
+            const PropertyHub({super.key,required this.token,required this.refresh}); final int token; final VoidCallback refresh;
+            Future<Map<String,dynamic>> load()async{
+              final ps=await Db.i.rows('property'),l=await Db.i.rows('ledger',order:'entry_date DESC'),e=await Db.i.rows('expenses',order:'expense_date DESC'),j=await Db.i.rows('journal',order:'created_at DESC');
+              double payments=0,charges=0,credits=0;for(final x in l){final a=n(x['amount']);if(x['entry_type']=='payment'||x['entry_type']=='reversal')payments+=a;else if(x['entry_type']=='charge')charges+=a;else if(x['entry_type']=='credit')credits+=a;}
+              final expenses=e.fold<double>(0,(s,x)=>s+n(x['amount']));
+              return {'p':ps.first,'l':l,'e':e,'j':j,'balance':charges-payments-credits,'cash':payments-expenses};
+            }
+            @override Widget build(BuildContext context)=>Page(title:'Property Hub',subtitle:'Protect the property • Preserve the record',child:FutureBuilder<Map<String,dynamic>>(key:ValueKey(token),future:load(),builder:(context,s){
+              if(!s.hasData)return const Center(child:CircularProgressIndicator());final d=s.data!,prop=d['p'] as Map<String,Object?>,l=d['l'] as List<Map<String,Object?>>,e=d['e'] as List<Map<String,Object?>>,j=d['j'] as List<Map<String,Object?>>;
+              return Column(children:[
+                CardX(accent:C.violet,child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[titleRow(Icons.home_work_outlined,'Property Overview'),const SizedBox(height:8),Text(prop['name'].toString(),style:const TextStyle(fontSize:22,fontWeight:FontWeight.w900)),Text('${prop['tenant']} • ${money(n(prop['rent']))}/month',style:const TextStyle(color:C.muted)),const SizedBox(height:13),Row(children:[Expanded(child:metric('Tenant balance',d['balance'] as double,(d['balance'] as double)>0?C.warning:C.green)),Expanded(child:metric('Net cash flow',d['cash'] as double,(d['cash'] as double)>=0?C.green:C.danger))]) ])),
+                const SizedBox(height:10),
+                Row(children:[Expanded(child:FilledButton.icon(onPressed:()=>payment(context),icon:const Icon(Icons.add_card),label:const Text('Payment'))),const SizedBox(width:8),Expanded(child:OutlinedButton.icon(onPressed:()=>expense(context),icon:const Icon(Icons.build_outlined),label:const Text('Expense')))]),
+                const SizedBox(height:8),SizedBox(width:double.infinity,child:OutlinedButton.icon(onPressed:()=>journal(context),icon:const Icon(Icons.menu_book_outlined),label:const Text('Add tenant journal entry'))),
+                const SizedBox(height:12),
+                CardX(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[titleRow(Icons.account_balance,'Rent Ledger'),const Padding(padding:EdgeInsets.symmetric(vertical:7),child:Text('Posted history stays preserved. Corrections create separate reversal entries.',style:TextStyle(color:C.muted,fontSize:11))),...l.take(12).map((x)=>ListTile(contentPadding:EdgeInsets.zero,leading:Icon(x['entry_type']=='payment'?Icons.south_west:x['entry_type']=='reversal'?Icons.undo:Icons.north_east,color:x['entry_type']=='payment'?C.green:x['entry_type']=='reversal'?C.danger:C.warning),title:Text(x['description'].toString()),subtitle:Text('${dt(x['entry_date']).month}/${dt(x['entry_date']).day}/${dt(x['entry_date']).year}${x['method'].toString().isEmpty?'':' • ${x['method']}'}'),trailing:Row(mainAxisSize:MainAxisSize.min,children:[Text(money(n(x['amount'])),style:const TextStyle(fontWeight:FontWeight.w800)),if(x['entry_type']!='reversal')PopupMenuButton<String>(onSelected:(v)async{if(v=='reverse'){await Db.i.reverseLedger(x);refresh();}},itemBuilder:(_)=>const[PopupMenuItem(value:'reverse',child:Text('Post reversal'))])])))])),
+                const SizedBox(height:12),
+                CardX(accent:C.blue,child:Column(children:[titleRow(Icons.build_circle_outlined,'Property Expenses'),if(e.isEmpty)const Padding(padding:EdgeInsets.all(8),child:Text('No expenses recorded.',style:TextStyle(color:C.muted))),...e.take(8).map((x)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(x['category'].toString()),subtitle:Text('${x['vendor']} • ${x['note']}'),trailing:Text(money(n(x['amount'])))))])),
+                const SizedBox(height:12),
+                CardX(accent:C.violet,child:Column(children:[titleRow(Icons.menu_book,'Tenant Journal'),if(j.isEmpty)const Padding(padding:EdgeInsets.all(8),child:Text('No journal entries yet.',style:TextStyle(color:C.muted))),...j.take(6).map((x)=>ListTile(contentPadding:EdgeInsets.zero,leading:const Icon(Icons.auto_stories,color:C.lavender),title:Text(x['category'].toString()),subtitle:Text(x['note'].toString())))]))
+              ]);
+            }));
+            Widget metric(String label,double v,Color c)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style:const TextStyle(color:C.muted,fontSize:11)),Text(money(v),style:TextStyle(color:c,fontSize:19,fontWeight:FontWeight.w900))]);
+            Future<void> payment(BuildContext context)async{
+              final a=TextEditingController(),ref=TextEditingController();String method='Chime';
+              final ok=await showDialog<bool>(context:context,builder:(x)=>StatefulBuilder(builder:(x,set)=>AlertDialog(title:const Text('Record rent payment'),content:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:a,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Amount')),const SizedBox(height:8),DropdownButtonFormField<String>(initialValue:method,items:['Chime','Cash','Other'].map((m)=>DropdownMenuItem(value:m,child:Text(m))).toList(),onChanged:(v)=>set(()=>method=v??method),decoration:const InputDecoration(labelText:'Method')),const SizedBox(height:8),TextField(controller:ref,decoration:const InputDecoration(labelText:'Reference / note'))]),actions:[TextButton(onPressed:()=>Navigator.pop(x,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(x,true),child:const Text('Post'))])));
+              final amount=double.tryParse(a.text);if(ok==true&&amount!=null&&amount>0){await Db.i.add('ledger',{'entry_type':'payment','amount':amount,'entry_date':DateTime.now().toIso8601String(),'description':'Rent payment received','method':method,'reference':ref.text.trim()});refresh();}
+            }
+            Future<void> expense(BuildContext context)async{
+              final a=TextEditingController(),cat=TextEditingController(text:'Maintenance'),vendor=TextEditingController(),note=TextEditingController();
+              final ok=await showDialog<bool>(context:context,builder:(x)=>AlertDialog(title:const Text('Property expense'),content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:a,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Amount')),const SizedBox(height:8),TextField(controller:cat,decoration:const InputDecoration(labelText:'Category')),const SizedBox(height:8),TextField(controller:vendor,decoration:const InputDecoration(labelText:'Vendor / payee')),const SizedBox(height:8),TextField(controller:note,decoration:const InputDecoration(labelText:'Business-purpose note'))])),actions:[TextButton(onPressed:()=>Navigator.pop(x,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(x,true),child:const Text('Save'))]));
+              final amount=double.tryParse(a.text);if(ok==true&&amount!=null&&amount>0){await Db.i.add('expenses',{'amount':amount,'expense_date':DateTime.now().toIso8601String(),'category':cat.text.trim().isEmpty?'Other':cat.text.trim(),'vendor':vendor.text.trim(),'note':note.text.trim()});refresh();}
+            }
+            Future<void> journal(BuildContext context)async{
+              final cat=TextEditingController(text:'General'),note=TextEditingController();
+              final ok=await showDialog<bool>(context:context,builder:(x)=>AlertDialog(title:const Text('Tenant journal'),content:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:cat,decoration:const InputDecoration(labelText:'Category')),const SizedBox(height:8),TextField(controller:note,maxLines:4,decoration:const InputDecoration(labelText:'Note'))]),actions:[TextButton(onPressed:()=>Navigator.pop(x,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(x,true),child:const Text('Append'))]));
+              if(ok==true&&note.text.trim().isNotEmpty){await Db.i.add('journal',{'created_at':DateTime.now().toIso8601String(),'category':cat.text.trim().isEmpty?'General':cat.text.trim(),'note':note.text.trim(),'parent_id':null});refresh();}
+            }
+          }
+
+          class More extends StatelessWidget {
+            const More({super.key});
+            @override Widget build(BuildContext context)=>Page(title:'Snyder Family',subtitle:'Private by design',child:Column(children:[
+              CardX(accent:C.green,child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[titleRow(Icons.phonelink_lock,'Phone-only storage'),const SizedBox(height:10),const Text('Your household, stockpile, budgeting, property ledger, expenses, and journal are stored in this app’s private Android storage.'),const SizedBox(height:8),const Text('No account • No cloud database • No bank connection • No internet permission',style:TextStyle(color:C.green,fontWeight:FontWeight.w800))])),
+              const SizedBox(height:12),
+              CardX(accent:C.violet,child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[titleRow(Icons.shield_outlined,'Record integrity'),const SizedBox(height:10),const Text('Property history uses append-and-reverse behavior: posted ledger records are preserved and corrections are added as separate reversal entries.'),const SizedBox(height:8),const Text('Uninstalling the app removes its local data. A manual local backup/export module can be added in a later build.',style:TextStyle(color:C.muted))]))
+            ]));
+          }
+          DART
+
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts
+          sed -i 's/android:label="snyder_family"/android:label="Snyder Family"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/<application/<application android:allowBackup="false" android:fullBackupContent="false" android:usesCleartextTraffic="false"/' android/app/src/main/AndroidManifest.xml
+          find android/app/src -name AndroidManifest.xml -print0 | xargs -0 sed -i '/android.permission.INTERNET/d'
+
+          flutter pub get
+          dart run flutter_launcher_icons
+          dart format lib/main.dart
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter build apk --release
+
+      - name: Verify phone-only APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd snyder_build
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -f "$APK"
+          BT="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/$BT/aapt" dump permissions "$APK" | tee permissions.txt
+          if grep -q 'android.permission.INTERNET' permissions.txt; then
+            echo "ERROR: APK requests INTERNET permission" >&2
+            exit 1
+          fi
+          cp "$APK" ../Snyder_Family_v0.3.0_phone_only.apk
+          {
+            echo "Snyder Family v0.3.0 private alpha"
+            echo "Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Storage: Android app-private SQLite database"
+            echo "Cloud backup: disabled"
+            echo "INTERNET permission: absent (verified)"
+            echo "Property ledger: append/reversal model"
+          } > ../BUILD_REPORT.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Snyder-Family-v0.3.0-phone-only
+          path: |
+            Snyder_Family_v0.3.0_phone_only.apk
+            BUILD_REPORT.txt
+          if-no-files-found: error
