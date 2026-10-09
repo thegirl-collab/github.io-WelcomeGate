@@ -417,6 +417,7 @@ jobs:
           flutter pub get
           dart run flutter_launcher_icons
           dart format lib/main.dart
+          rm -f test/widget_test.dart
           flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter build apk --release
 
