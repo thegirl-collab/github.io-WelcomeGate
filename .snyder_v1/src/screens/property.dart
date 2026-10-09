@@ -312,7 +312,7 @@ class _PropertyScreenState extends State<PropertyScreen> {
         SnyderCard(child: Column(children: [
           sectionTitle(Icons.history, 'Audit Log'),
           if (rows.isEmpty) const Padding(padding: EdgeInsets.all(16), child: Text('No audit events yet.')),
-          ...rows.map((x) => ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.fingerprint, color: SnyderColors.violet), title: Text(x['action'].toString()), subtitle: Text('${shortDate(parseDate(x['timestamp']))} • ${x['record_type']} ${x['record_id']}')),
+          for (final x in rows) ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.fingerprint, color: SnyderColors.violet), title: Text(x['action'].toString()), subtitle: Text('${shortDate(parseDate(x['timestamp']))} • ${x['record_type']} ${x['record_id']}')),
         ])),
       ]);
     },
